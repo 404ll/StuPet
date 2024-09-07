@@ -4,7 +4,11 @@ module stupet::stupet {
     use sui::dynamic_object_field as dof;
     use sui::dynamic_field as df;
     use sui::clock::Clock;
-    use sui::event::emit;
+    use sui::tx_context::{TxContext,sender};
+    use sui::display;
+    use sui::package;
+
+    
 
 //===========ERROR========
 
@@ -17,6 +21,8 @@ module stupet::stupet {
     const Type_cap:u64 = 1;
     const Type_action:u64 = 2;
     const Type_item:u64 = 3;
+// OTW
+    public struct STUPET has drop{}
 
 //=== ========Struct========
     public struct User has key, store {    
@@ -37,7 +43,6 @@ module stupet::stupet {
         name: String,
         grade_level: u64,
         birthdate: u64,
-        url: Url,
         attributes: vector<String>
     }
 
@@ -49,21 +54,21 @@ module stupet::stupet {
 
     public struct ItemKey has copy, store, drop { mold: String }
 
-//===========Event==========
-    public struct Event_petCreated has copy,drop{
-        id: ID,
-        name: String,
-        owner: address,
-    }
 
-    public struct Event_userCreated has copy,drop{
-        id: ID,
-        user_address: address,
-        total_score: u64
-    }
 //===========init==========
-    fun init(ctx:&mut TxContext){
+    fun init(otw: STUPET, ctx:&mut TxContext){
        transfer::transfer(AdminCap{id: object::new(ctx)}, ctx.sender());
+       let keys = vector[
+           utf8(b"name"),
+           utf8(b"image_url"),
+       ];
+
+       let values = vector[
+           utf8(b"your pet:{name}"),
+           utf8(b"")
+       ];
+       let publisher = package::claim(otw, ctx);
+       transfer::public_transfer(publisher, ctx.sender());
     }
 
 //==============user_functions==========
@@ -73,11 +78,6 @@ module stupet::stupet {
             total_score: 0,
             user_address: ctx.sender()
         };
-        emit(Event_userCreated{
-            id: object::id(&user),
-            user_address: ctx.sender(),
-            total_score: 0
-        });
         transfer::transfer(user,ctx.sender());
     }
 
@@ -86,8 +86,8 @@ module stupet::stupet {
     }
 
 //===========Item_functions==========
-    public entry fun mint_item(types: u64, ctx:&mut TxContext){
-        
+    public entry fun mint_item(user: &mut User,types: u64,ctx:&mut TxContext){
+        assert!(user.total_score >= 10,EscoreNotEnough);
         if(types == 1){
         let item = Item{
             id: object::new(ctx),
@@ -95,7 +95,8 @@ module stupet::stupet {
             url: url::new_unsafe_from_bytes(b"https://example.com/item.jpg"),
             mold: utf8(b"cap"),
         };
-            transfer::transfer(item,ctx.sender());
+            user.total_score = user.total_score - 10;
+            transfer::transfer(item,sender(ctx));
         }
         else if(types == 2){
             let item = Item{
@@ -104,7 +105,8 @@ module stupet::stupet {
                 url: url::new_unsafe_from_bytes(b"https://example.com/item.jpg"),
                 mold: utf8(b"action"),
             };
-            transfer::transfer(item,ctx.sender());
+            user.total_score = user.total_score - 10;
+            transfer::transfer(item,sender(ctx));
         }
         else{
              let item = Item{
@@ -113,40 +115,38 @@ module stupet::stupet {
                 url: url::new_unsafe_from_bytes(b"https://example.com/item.jpg"),
                 mold: utf8(b"item"),
             };
-            transfer::transfer(item,ctx.sender());
+            user.total_score = user.total_score - 10;
+            transfer::transfer(item,sender(ctx));
         }
         
     }
 
-    //===========pet_functions==========
+//===========pet_functions==========
     public fun uid_mut(pet: &mut Pet) : &mut UID { &mut pet.id }
 
-    public entry fun create_pet(name:String, clock:&Clock, ctx:&mut TxContext) {
+    public entry fun create_pet(clock:&Clock, ctx:&mut TxContext) {
     
         let pet = Pet{
             id: object::new(ctx),
-            name,
-            grade_level:1,
+            name: utf8(b""),
+            grade_level:0,
             birthdate: sui::clock::timestamp_ms(clock),
             attributes: vector[],
-            url: url::new_unsafe_from_bytes(b"https://example.com/pet.jpg")
-        };
-
-        emit(Event_petCreated{
-            id: object::id(&pet),
-            name,
-            owner: ctx.sender(),
-            });
-
+       };
         transfer::transfer(pet,ctx.sender());
     }
 
-    //===========transfer==========
+    public fun update_pet_name(pet: &mut Pet, name: String){    
+        pet.name = name;
+    }
+
+    //===========carry==========
 
     public fun add_item_to_pet(pet:&mut Pet, item:Item){
         let uid_mut = uid_mut(pet);
         assert!(!dof::exists_(uid_mut, ItemKey{ mold: item.mold }), EmoldAlreadyExist);
-        dof::add(uid_mut, ItemKey{ mold: item.mold }, item)
+        dof::add(uid_mut, ItemKey{ mold: item.mold }, item);
+        pet.grade_level = pet.grade_level + 1;
     }
 
     public fun remove_item_from_pet(pet:&mut Pet,mold:String) : Item {
@@ -155,10 +155,7 @@ module stupet::stupet {
         dof::remove(uid_mut,ItemKey { mold })
     }
 
-    //sign in +5 score and gradelevel
-    public entry fun update_pet(pet:&mut Pet, ctx:&mut TxContext) {
-        pet.grade_level = pet.grade_level + 2;
-    }
+
 
     //===========read_item==========
     public fun read_item_name(item: &Item) : String {
